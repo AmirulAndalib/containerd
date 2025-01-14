@@ -17,9 +17,13 @@
 package manager
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,16 +34,20 @@ import (
 	"github.com/containerd/cgroups/v3"
 	"github.com/containerd/cgroups/v3/cgroup1"
 	cgroupsv2 "github.com/containerd/cgroups/v3/cgroup2"
+	"github.com/containerd/containerd/api/types"
+	"github.com/containerd/containerd/api/types/runc/options"
 	"github.com/containerd/containerd/v2/cmd/containerd-shim-runc-v2/process"
 	"github.com/containerd/containerd/v2/cmd/containerd-shim-runc-v2/runc"
-	"github.com/containerd/containerd/v2/mount"
-	"github.com/containerd/containerd/v2/namespaces"
-	"github.com/containerd/containerd/v2/oci"
+	"github.com/containerd/containerd/v2/core/mount"
+	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/containerd/v2/pkg/schedcore"
-	"github.com/containerd/containerd/v2/runtime/v2/runc/options"
-	"github.com/containerd/containerd/v2/runtime/v2/shim"
+	"github.com/containerd/containerd/v2/pkg/shim"
+	"github.com/containerd/containerd/v2/version"
+	"github.com/containerd/errdefs"
 	runcC "github.com/containerd/go-runc"
 	"github.com/containerd/log"
+	"github.com/containerd/typeurl/v2"
+	"github.com/opencontainers/runtime-spec/specs-go/features"
 	"golang.org/x/sys/unix"
 )
 
@@ -95,6 +103,7 @@ func newCommand(ctx context.Context, id, containerdAddress, containerdTTRPCAddre
 	cmd := exec.Command(self, args...)
 	cmd.Dir = cwd
 	cmd.Env = append(os.Environ(), "GOMAXPROCS=4")
+	cmd.Env = append(cmd.Env, "OTEL_SERVICE_NAME=containerd-shim-"+id)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setpgid: true,
 	}
@@ -102,7 +111,8 @@ func newCommand(ctx context.Context, id, containerdAddress, containerdTTRPCAddre
 }
 
 func readSpec() (*spec, error) {
-	f, err := os.Open(oci.ConfigFilename)
+	const configFileName = "config.json"
+	f, err := os.Open(configFileName)
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +126,59 @@ func readSpec() (*spec, error) {
 
 func (m manager) Name() string {
 	return m.name
+}
+
+type shimSocket struct {
+	addr string
+	s    *net.UnixListener
+	f    *os.File
+}
+
+func (s *shimSocket) Close() {
+	if s.s != nil {
+		s.s.Close()
+	}
+	if s.f != nil {
+		s.f.Close()
+	}
+	_ = shim.RemoveSocket(s.addr)
+}
+
+func newShimSocket(ctx context.Context, path, id string, debug bool) (*shimSocket, error) {
+	address, err := shim.SocketAddress(ctx, path, id, debug)
+	if err != nil {
+		return nil, err
+	}
+	socket, err := shim.NewSocket(address)
+	if err != nil {
+		// the only time where this would happen is if there is a bug and the socket
+		// was not cleaned up in the cleanup method of the shim or we are using the
+		// grouping functionality where the new process should be run with the same
+		// shim as an existing container
+		if !shim.SocketEaddrinuse(err) {
+			return nil, fmt.Errorf("create new shim socket: %w", err)
+		}
+		if !debug && shim.CanConnect(address) {
+			return &shimSocket{addr: address}, errdefs.ErrAlreadyExists
+		}
+		if err := shim.RemoveSocket(address); err != nil {
+			return nil, fmt.Errorf("remove pre-existing socket: %w", err)
+		}
+		if socket, err = shim.NewSocket(address); err != nil {
+			return nil, fmt.Errorf("try create new shim socket 2x: %w", err)
+		}
+	}
+	s := &shimSocket{
+		addr: address,
+		s:    socket,
+	}
+	f, err := socket.File()
+	if err != nil {
+		s.Close()
+		return nil, err
+	}
+	s.f = f
+	return s, nil
 }
 
 func (manager) Start(ctx context.Context, id string, opts shim.StartOpts) (_ shim.BootstrapParams, retErr error) {
@@ -138,44 +201,35 @@ func (manager) Start(ctx context.Context, id string, opts shim.StartOpts) (_ shi
 			break
 		}
 	}
-	address, err := shim.SocketAddress(ctx, opts.Address, grouping)
-	if err != nil {
-		return params, err
-	}
 
-	socket, err := shim.NewSocket(address)
-	if err != nil {
-		// the only time where this would happen is if there is a bug and the socket
-		// was not cleaned up in the cleanup method of the shim or we are using the
-		// grouping functionality where the new process should be run with the same
-		// shim as an existing container
-		if !shim.SocketEaddrinuse(err) {
-			return params, fmt.Errorf("create new shim socket: %w", err)
-		}
-		if shim.CanConnect(address) {
-			params.Address = address
-			return params, nil
-		}
-		if err := shim.RemoveSocket(address); err != nil {
-			return params, fmt.Errorf("remove pre-existing socket: %w", err)
-		}
-		if socket, err = shim.NewSocket(address); err != nil {
-			return params, fmt.Errorf("try create new shim socket 2x: %w", err)
-		}
-	}
+	var sockets []*shimSocket
 	defer func() {
 		if retErr != nil {
-			socket.Close()
-			_ = shim.RemoveSocket(address)
+			for _, s := range sockets {
+				s.Close()
+			}
 		}
 	}()
 
-	f, err := socket.File()
+	s, err := newShimSocket(ctx, opts.Address, grouping, false)
 	if err != nil {
+		if errdefs.IsAlreadyExists(err) {
+			params.Address = s.addr
+			return params, nil
+		}
 		return params, err
 	}
+	sockets = append(sockets, s)
+	cmd.ExtraFiles = append(cmd.ExtraFiles, s.f)
 
-	cmd.ExtraFiles = append(cmd.ExtraFiles, f)
+	if opts.Debug {
+		s, err = newShimSocket(ctx, opts.Address, grouping, true)
+		if err != nil {
+			return params, err
+		}
+		sockets = append(sockets, s)
+		cmd.ExtraFiles = append(cmd.ExtraFiles, s.f)
+	}
 
 	goruntime.LockOSThread()
 	if os.Getenv("SCHED_CORE") != "" {
@@ -185,7 +239,6 @@ func (manager) Start(ctx context.Context, id string, opts shim.StartOpts) (_ shi
 	}
 
 	if err := cmd.Start(); err != nil {
-		f.Close()
 		return params, err
 	}
 
@@ -225,7 +278,7 @@ func (manager) Start(ctx context.Context, id string, opts shim.StartOpts) (_ shi
 		return params, fmt.Errorf("failed to adjust OOM score for shim: %w", err)
 	}
 
-	params.Address = address
+	params.Address = sockets[0].addr
 	return params, nil
 }
 
@@ -241,7 +294,7 @@ func (manager) Stop(ctx context.Context, id string) (shim.StopStatus, error) {
 		return shim.StopStatus{}, err
 	}
 	runtime, err := runc.ReadRuntime(path)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return shim.StopStatus{}, err
 	}
 	opts, err := runc.ReadOptions(path)
@@ -271,4 +324,64 @@ func (manager) Stop(ctx context.Context, id string) (shim.StopStatus, error) {
 		ExitStatus: 128 + int(unix.SIGKILL),
 		Pid:        pid,
 	}, nil
+}
+
+func (m manager) Info(ctx context.Context, optionsR io.Reader) (*types.RuntimeInfo, error) {
+	info := &types.RuntimeInfo{
+		Name: m.name,
+		Version: &types.RuntimeVersion{
+			Version:  version.Version,
+			Revision: version.Revision,
+		},
+		Annotations: nil,
+	}
+	binaryName := runcC.DefaultCommand
+	opts, err := shim.ReadRuntimeOptions[*options.Options](optionsR)
+	if err != nil {
+		if !errors.Is(err, errdefs.ErrNotFound) {
+			return nil, fmt.Errorf("failed to read runtime options (*options.Options): %w", err)
+		}
+	}
+	if opts != nil {
+		info.Options, err = typeurl.MarshalAnyToProto(opts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal %T: %w", opts, err)
+		}
+		if opts.BinaryName != "" {
+			binaryName = opts.BinaryName
+		}
+
+	}
+	absBinary, err := exec.LookPath(binaryName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up the path of %q: %w", binaryName, err)
+	}
+	features, err := m.features(ctx, absBinary, opts)
+	if err != nil {
+		// youki does not implement `runc features` yet, at the time of writing this (Sep 2023)
+		// https://github.com/containers/youki/issues/815
+		log.G(ctx).WithError(err).Debug("Failed to get the runtime features. The runc binary does not implement `runc features` command?")
+	}
+	if features != nil {
+		info.Features, err = typeurl.MarshalAnyToProto(features)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal %T: %w", features, err)
+		}
+	}
+	return info, nil
+}
+
+func (m manager) features(ctx context.Context, absBinary string, opts *options.Options) (*features.Features, error) {
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, absBinary, "features")
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute %v: %w (stderr: %q)", cmd.Args, err, stderr.String())
+	}
+	var feat features.Features
+	if err := json.Unmarshal(stdout, &feat); err != nil {
+		return nil, err
+	}
+	return &feat, nil
 }

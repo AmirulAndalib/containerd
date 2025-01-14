@@ -21,29 +21,29 @@ import (
 
 	"github.com/containerd/containerd/v2/cmd/ctr/commands"
 	"github.com/containerd/containerd/v2/pkg/display"
-	"github.com/urfave/cli"
+	"github.com/urfave/cli/v2"
 )
 
-var inspectCommand = cli.Command{
+var inspectCommand = &cli.Command{
 	Name:        "inspect",
 	Aliases:     []string{"i"},
 	Usage:       "inspect an image",
 	ArgsUsage:   "<image> [flags]",
 	Description: `Inspect an image`,
 	Flags: []cli.Flag{
-		cli.BoolFlag{
+		&cli.BoolFlag{
 			Name:  "content",
 			Usage: "Show JSON content",
 		},
 	},
-	Action: func(clicontext *cli.Context) error {
-		client, ctx, cancel, err := commands.NewClient(clicontext)
+	Action: func(cliContext *cli.Context) error {
+		client, ctx, cancel, err := commands.NewClient(cliContext)
 		if err != nil {
 			return err
 		}
 		defer cancel()
 		var (
-			ref        = clicontext.Args().First()
+			ref        = cliContext.Args().First()
 			imageStore = client.ImageService()
 			cs         = client.ContentStore()
 		)
@@ -56,7 +56,7 @@ var inspectCommand = cli.Command{
 		opts := []display.PrintOpt{
 			display.WithWriter(os.Stdout),
 		}
-		if clicontext.Bool("content") {
+		if cliContext.Bool("content") {
 			opts = append(opts, display.Verbose)
 		}
 

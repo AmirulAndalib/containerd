@@ -23,13 +23,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	taskapi "github.com/containerd/containerd/v2/api/runtime/task/v3"
+	taskapi "github.com/containerd/containerd/api/runtime/task/v3"
 	"github.com/containerd/containerd/v2/cmd/containerd-shim-runc-v2/task"
-	"github.com/containerd/containerd/v2/oci"
-	"github.com/containerd/containerd/v2/pkg/failpoint"
+	"github.com/containerd/containerd/v2/internal/failpoint"
+	"github.com/containerd/containerd/v2/pkg/oci"
+	"github.com/containerd/containerd/v2/pkg/shim"
 	"github.com/containerd/containerd/v2/pkg/shutdown"
 	"github.com/containerd/containerd/v2/plugins"
-	"github.com/containerd/containerd/v2/runtime/v2/shim"
 	"github.com/containerd/plugin"
 	"github.com/containerd/plugin/registry"
 	"github.com/containerd/ttrpc"
@@ -74,7 +74,7 @@ func init() {
 }
 
 var (
-	_ = shim.TTRPCServerOptioner(&taskServiceWithFp{})
+	_ = shim.TTRPCServerUnaryOptioner(&taskServiceWithFp{})
 )
 
 type taskServiceWithFp struct {
@@ -87,7 +87,7 @@ func (s *taskServiceWithFp) RegisterTTRPC(server *ttrpc.Server) error {
 	return nil
 }
 
-func (s *taskServiceWithFp) UnaryInterceptor() ttrpc.UnaryServerInterceptor {
+func (s *taskServiceWithFp) UnaryServerInterceptor() ttrpc.UnaryServerInterceptor {
 	return func(ctx context.Context, unmarshal ttrpc.Unmarshaler, info *ttrpc.UnaryServerInfo, method ttrpc.Method) (interface{}, error) {
 		methodName := filepath.Base(info.FullMethod)
 		if fp, ok := s.fps[methodName]; ok {

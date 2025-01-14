@@ -22,14 +22,13 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/containerd/containerd/v2/containers"
-	"github.com/containerd/containerd/v2/content"
-	"github.com/containerd/containerd/v2/errdefs"
-	"github.com/containerd/containerd/v2/images"
-	"github.com/containerd/containerd/v2/namespaces"
-	"github.com/containerd/containerd/v2/oci"
-	"github.com/containerd/containerd/v2/protobuf"
-	"github.com/containerd/containerd/v2/snapshots"
+	"github.com/containerd/containerd/v2/core/containers"
+	"github.com/containerd/containerd/v2/core/content"
+	"github.com/containerd/containerd/v2/core/images"
+	"github.com/containerd/containerd/v2/core/snapshots"
+	"github.com/containerd/containerd/v2/pkg/namespaces"
+	"github.com/containerd/containerd/v2/pkg/oci"
+	"github.com/containerd/errdefs"
 	"github.com/containerd/typeurl/v2"
 	"github.com/opencontainers/image-spec/identity"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
@@ -321,7 +320,7 @@ func WithSpec(s *oci.Spec, opts ...oci.SpecOpts) NewContainerOpts {
 		}
 
 		var err error
-		c.Spec, err = protobuf.MarshalAnyToProto(s)
+		c.Spec, err = typeurl.MarshalAnyToProto(s)
 		return err
 	}
 }

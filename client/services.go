@@ -19,22 +19,21 @@ package client
 import (
 	"fmt"
 
-	containersapi "github.com/containerd/containerd/v2/api/services/containers/v1"
-	"github.com/containerd/containerd/v2/api/services/diff/v1"
-	imagesapi "github.com/containerd/containerd/v2/api/services/images/v1"
-	introspectionapi "github.com/containerd/containerd/v2/api/services/introspection/v1"
-	namespacesapi "github.com/containerd/containerd/v2/api/services/namespaces/v1"
-	"github.com/containerd/containerd/v2/api/services/tasks/v1"
-	"github.com/containerd/containerd/v2/containers"
-	"github.com/containerd/containerd/v2/content"
-	"github.com/containerd/containerd/v2/images"
-	"github.com/containerd/containerd/v2/leases"
-	"github.com/containerd/containerd/v2/namespaces"
+	containersapi "github.com/containerd/containerd/api/services/containers/v1"
+	"github.com/containerd/containerd/api/services/diff/v1"
+	imagesapi "github.com/containerd/containerd/api/services/images/v1"
+	namespacesapi "github.com/containerd/containerd/api/services/namespaces/v1"
+	"github.com/containerd/containerd/api/services/tasks/v1"
+	"github.com/containerd/containerd/v2/core/containers"
+	"github.com/containerd/containerd/v2/core/content"
+	"github.com/containerd/containerd/v2/core/images"
+	"github.com/containerd/containerd/v2/core/introspection"
+	"github.com/containerd/containerd/v2/core/leases"
+	"github.com/containerd/containerd/v2/core/sandbox"
+	"github.com/containerd/containerd/v2/core/snapshots"
+	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/containerd/v2/plugins"
-	"github.com/containerd/containerd/v2/sandbox"
-	srv "github.com/containerd/containerd/v2/services"
-	"github.com/containerd/containerd/v2/services/introspection"
-	"github.com/containerd/containerd/v2/snapshots"
+	srv "github.com/containerd/containerd/v2/plugins/services"
 	"github.com/containerd/plugin"
 )
 
@@ -150,13 +149,6 @@ func WithLeasesService(leasesService leases.Manager) ServicesOpt {
 	}
 }
 
-// WithIntrospectionClient sets the introspection service using an introspection client.
-func WithIntrospectionClient(in introspectionapi.IntrospectionClient) ServicesOpt {
-	return func(s *services) {
-		s.introspectionService = introspection.NewIntrospectionServiceFromClient(in)
-	}
-}
-
 // WithIntrospectionService sets the introspection service.
 func WithIntrospectionService(in introspection.Service) ServicesOpt {
 	return func(s *services) {
@@ -221,7 +213,7 @@ func WithInMemoryServices(ic *plugin.InitContext) Opt {
 				return WithNamespaceClient(s.(namespacesapi.NamespacesClient))
 			},
 			srv.IntrospectionService: func(s interface{}) ServicesOpt {
-				return WithIntrospectionClient(s.(introspectionapi.IntrospectionClient))
+				return WithIntrospectionService(s.(introspection.Service))
 			},
 		} {
 			i := plugins[s]
@@ -235,21 +227,6 @@ func WithInMemoryServices(ic *plugin.InitContext) Opt {
 		for _, o := range opts {
 			o(c.services)
 		}
-		return nil
-	}
-}
-
-func WithInMemorySandboxControllers(ic *plugin.InitContext) Opt {
-	return func(c *clientOpts) error {
-		sandboxers, err := ic.GetByType(plugins.SandboxControllerPlugin)
-		if err != nil {
-			return err
-		}
-		sc := make(map[string]sandbox.Controller)
-		for name, p := range sandboxers {
-			sc[name] = p.(sandbox.Controller)
-		}
-		c.services.sandboxers = sc
 		return nil
 	}
 }

@@ -22,12 +22,6 @@ import (
 	"path/filepath"
 
 	"github.com/Microsoft/hcsshim/osversion"
-	_ "github.com/Microsoft/hcsshim/test/functional/manifest" // For rsrc_amd64.syso
-)
-
-//nolint:unused // some variables used for fuzz
-const (
-	defaultAddress = `\\.\pipe\containerd-containerd-test`
 )
 
 var (

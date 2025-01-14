@@ -26,10 +26,10 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/containerd/containerd/v2/archive"
-	"github.com/containerd/containerd/v2/archive/compression"
-	"github.com/containerd/containerd/v2/content"
-	"github.com/containerd/containerd/v2/images"
+	"github.com/containerd/containerd/v2/core/content"
+	"github.com/containerd/containerd/v2/core/images"
+	"github.com/containerd/containerd/v2/pkg/archive"
+	"github.com/containerd/containerd/v2/pkg/archive/compression"
 )
 
 // Install a binary image into the opt service.
@@ -112,8 +112,7 @@ func (c *Client) getInstallPath(ctx context.Context, config InstallConfig) (stri
 	if config.Path != "" {
 		return config.Path, nil
 	}
-	filters := []string{"id==opt"}
-	resp, err := c.IntrospectionService().Plugins(ctx, filters)
+	resp, err := c.IntrospectionService().Plugins(ctx, "id==opt")
 	if err != nil {
 		return "", err
 	}

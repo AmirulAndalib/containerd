@@ -21,23 +21,28 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/mod/semver"
-	exec "golang.org/x/sys/execabs"
 
-	"github.com/containerd/containerd/v2/archive"
+	"github.com/containerd/containerd/v2/pkg/archive"
 	"github.com/containerd/containerd/v2/version"
 )
 
-// downloadPreviousReleaseBinary downloads the latest version of previous release
-// into the target dir.
-func downloadPreviousReleaseBinary(t *testing.T, targetDir string) {
+// downloadPreviousLatestReleaseBinary downloads the latest version of previous
+// release into the target dir.
+func downloadPreviousLatestReleaseBinary(t *testing.T, targetDir string) {
 	ver := previousReleaseVersion(t)
 
+	downloadReleaseBinary(t, targetDir, ver)
+}
+
+// downloadReleaseBinary downloads containerd binary with a given release.
+func downloadReleaseBinary(t *testing.T, targetDir string, ver string) {
 	targetURL := fmt.Sprintf("https://github.com/containerd/containerd/releases/download/%s/containerd-%s-linux-%s.tar.gz",
 		ver, strings.TrimPrefix(ver, "v"), runtime.GOARCH,
 	)
@@ -91,8 +96,10 @@ func gitLsRemoteCtrdTags(t *testing.T, pattern string) (_tags []string) {
 	cmd := exec.Command("git", "ls-remote", "--tags", "--exit-code",
 		"https://github.com/containerd/containerd.git", pattern)
 
-	out, err := cmd.Output()
-	require.NoError(t, err, "failed to list tags by pattern %s", pattern)
+	t.Logf("Running %s", cmd.String())
+
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "failed to list tags by pattern %s: %s", pattern, string(out))
 
 	// output is like
 	//

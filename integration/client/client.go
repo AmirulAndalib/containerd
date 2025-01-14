@@ -23,9 +23,8 @@ import (
 	"os"
 	"testing"
 
-	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/defaults"
-	"github.com/containerd/containerd/v2/namespaces"
+	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/log/logtest"
 )
 
@@ -37,12 +36,12 @@ const (
 var (
 	address           string
 	ctrdStdioFilePath string
-	testSnapshotter   = containerd.DefaultSnapshotter
+	testSnapshotter   = defaults.DefaultSnapshotter
 	ctrd              = &daemon{}
 )
 
 func init() {
-	flag.StringVar(&address, "address", defaults.DefaultAddress, "The address to the containerd socket for use in the tests")
+	flag.StringVar(&address, "address", defaultAddress, "The address to the containerd socket for use in the tests")
 }
 
 func testContext(t testing.TB) (context.Context, context.CancelFunc) {

@@ -33,7 +33,6 @@ limitations under the License.
 package remote
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -62,10 +61,7 @@ func NewImageService(endpoint string, connectionTimeout time.Duration) (internal
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), connectionTimeout)
-	defer cancel()
-
-	conn, err := grpc.DialContext(ctx, addr,
+	conn, err := grpc.NewClient(addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithContextDialer(dialer),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMsgSize)),
@@ -122,7 +118,7 @@ func (r *ImageService) ImageStatus(image *runtimeapi.ImageSpec, opts ...grpc.Cal
 }
 
 // PullImage pulls an image with authentication config.
-func (r *ImageService) PullImage(image *runtimeapi.ImageSpec, auth *runtimeapi.AuthConfig, podSandboxConfig *runtimeapi.PodSandboxConfig, opts ...grpc.CallOption) (string, error) {
+func (r *ImageService) PullImage(image *runtimeapi.ImageSpec, auth *runtimeapi.AuthConfig, podSandboxConfig *runtimeapi.PodSandboxConfig, runtimeHandler string, opts ...grpc.CallOption) (string, error) {
 	ctx, cancel := getContextWithCancel()
 	defer cancel()
 
